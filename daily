@@ -1,0 +1,331 @@
+#!/Users/mschriftman/.rbenv/versions/2.1.1/bin/ruby
+$LOAD_PATH << './lib'
+
+require 'rubygems'
+require 'csv'
+require 'fileutils'
+require 'jira'
+require 'paint'
+#require 'daily_report'
+
+TODAY = (Date.today - Date.new(1970, 1, 1)).to_i
+
+def get_jira_client
+	JIRA::Client.new(options = {
+    	:username => "mschriftman",
+    	:password => "l1bertyJ",
+    	:site     => 'https://jira.spredfast.com/',
+    	:context_path => '',
+    	:auth_type => :basic,
+    	:max_results => 99
+ 	})
+end
+
+STATS = {}
+FIELD_MAP = {}
+FIELD_MAP[:original] = {:dt => 0, :total => 1, :open => 2, :in_progress => 3, :in_development => 4, :in_testing => 5, :closed => 6, :history => 7, :previous => 8}
+FIELD_MAP[:remaining] = {:dt => 0, :total => 1, :open => 2, :in_progress => 3, :in_development => 4, :in_testing => 5, :closed => 6, :history => 7, :previous => 8}
+FIELD_MAP[:timespent] = {:dt => 0, :total => 1, :open => 2, :in_progress => 3, :in_development => 4, :in_testing => 5, :closed => 6, :history => 7, :previous => 8}
+FIELD_MAP[:tasks] = {:dt => 0, :total => 1, :open => 2, :in_progress => 3, :in_development => 4, :in_testing => 5, :closed => 6, :history => 7, :previous => 8}
+FIELD_MAP[:stories] = {:dt => 0, :total => 1, :open => 2, :in_progress => 3, :in_development => 4, :in_testing => 5, :closed => 6, :history => 7, :previous => 8}
+FIELD_MAP[:storyids] = {:dt => 0, :total => 1, :open => 2, :in_progress => 3, :in_development => 4, :in_testing => 5, :closed => 6, :history => 7, :previous => 8}
+FIELD_MAP[:taskids] = {:dt => 0, :total => 1, :open => 2, :in_progress => 3, :in_development => 4, :in_testing => 5, :closed => 6, :history => 7, :previous => 8}
+FIELD_MAP[:storypoints] = {:dt => 0, :total => 1, :open => 2, :in_progress => 3, :in_development => 4, :in_testing => 5, :closed => 6, :history => 7, :previous => 8}
+FIELD_MAP[:metrics] = {:dt => 0, :days5 => 1, :spd5 => 2, :ppd5 => 3, :tpd5 => 4, :days6 => 5, :spd6 => 6, :ppd6 => 7, :tpd6 => 8, :history => 9, :previous => 10, :sppd5 => 11, :sppd6 => 12}
+def get(table, key)
+	STATS[table] ||= []
+	if key
+		STATS[table][FIELD_MAP[table][key]]
+	else
+		STATS[table]
+	end
+end
+def set(table, key, value) STATS[table] ||= []; STATS[table][FIELD_MAP[table][key]] = value; end
+def inc(table, key, value) STATS[table] ||= []; STATS[table][FIELD_MAP[table][key]] ||= 0; STATS[table][FIELD_MAP[table][key]] += value; end
+def cat(table, key, value) STATS[table] ||= []; STATS[table][FIELD_MAP[table][key]] ||= ""; STATS[table][FIELD_MAP[table][key]] += ((STATS[table][FIELD_MAP[table][key]].empty? ? "" : "/") + value); end
+def pp() puts STATS.inspect; end
+
+FIELD_MAP.keys.each do |table|
+  self.class.class_eval do
+    define_method "get_#{table}" do |key| get(table, key); end
+    define_method "set_#{table}" do |key, value| set(table, key, value); end
+    define_method "inc_#{table}" do |key, value| inc(table, key, value); end
+    define_method "cat_#{table}" do |key, value| cat(table, key, value); end
+  end
+end
+
+def load_historical_data
+	# load historical data
+	previous_exists = true
+	[:original, :remaining, :tasks, :stories, :storypoints, :storyids, :taskids, :metrics].each{ |stat|
+		table_exists = load_table(stat)
+		previous_exists &&= table_exists
+	}
+	previous_exists
+end
+
+def load_table(table)
+	filename = "hist_#{table}.csv"
+	set(table, :history, [])
+	set(table, :previous, {})
+	begin
+		rows = CSV.read(filename)
+		set(table, :history, rows)
+		if most_recent = rows.max_by {|row| row[0]}
+			set(table, :previous, most_recent)
+			return true
+		end
+	rescue
+		FileUtils.touch(filename)
+	end
+	return false
+end
+
+def save_historical_data
+	[:original, :remaining, :tasks, :stories, :storyids, :taskids, :storypoints].each { |table|
+		CSV.open("hist_#{table}.csv", "wb") { |csv|
+			get(table, :history).each{|day|
+	    		csv << day if day[0].to_i < TODAY
+	    	}
+	    	csv << [TODAY, get(table, :total), get(table, :open), get(table, :in_progress), get(table, :in_development), get(table, :in_testing), get(table, :closed)]
+		}
+	}
+
+	CSV.open("hist_metrics.csv", "wb") { |csv|
+		get_metrics(:history).each{|day|
+			csv << day if day[0].to_i < TODAY
+		}
+		csv << [TODAY, get_metrics(:days5), get_metrics(:spd5), get_metrics(:ppd5), get_metrics(:tpd5), get_metrics(:days6), get_metrics(:spd6), get_metrics(:ppd6), get_metrics(:tpd6)]
+	}
+end
+
+DEV_HASH= {}
+def load_issue_data
+	issues = get_jira_client.Issue.jql('project = Development AND (issuetype in ("Story Bug", "Technical task") AND fixVersion = "UX 7.0 - Q1 Milestone" OR issuetype = Story AND "Epic Link" in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044))', 0, 2000)
+	issues.each do |issue|
+    	next unless issue_status = issue.status.name
+    	next unless issue.key =~ /DEV-/
+
+	    issue_status = issue_status.downcase.gsub(" ", "_").to_sym
+		assignee = issue.assignee ? issue.assignee.displayName : "Unknown"
+		DEV_HASH[assignee] ||= {:stories => 0, :tasks => 0, :original => 0, :timespent => 0, :bugs => 0}
+
+    	case issue.issuetype.name.downcase
+    	when 'technical task'
+	    	issue_status = :in_progress if [:information_needed, :in_code_read, :resolved].include? issue_status
+	    	issue_status = :open if [:reopened].include? issue_status
+
+	    	# default timespent to 100% accuracy if it's not provided
+	    	# issue.timeestimate => remaining
+	    	# issue.timeoriginalestimate => original
+	    	# issue.timespent -> timespent
+    		val = issue.timeestimate.to_i
+    		inc(:remaining, issue_status, val)
+    		inc(:remaining, :total, val)
+
+    		val = issue.timeoriginalestimate.to_i
+    		inc(:original, issue_status, val)
+    		inc(:original, :total, val)
+
+    		val = (issue.timespent || issue.timeoriginalestimate).to_i
+    		inc(:timespent, issue_status, val)
+    		inc(:timespent, :total, val)
+
+			inc_tasks(issue_status, 1)
+			inc_tasks(:total, 1)
+
+			cat_taskids(issue_status, issue.key)
+
+			# assignee stats
+			if issue_status == :closed
+				DEV_HASH[assignee][:tasks] += 1
+				DEV_HASH[assignee][:original] += issue.timeoriginalestimate.to_i
+				DEV_HASH[assignee][:timespent] += (issue.timespent || issue.timeoriginalestimate).to_i
+			end
+		when 'story'
+			inc_stories(issue_status, 1)
+			inc_stories(:total, 1)
+
+			cat_storyids(issue_status, issue.key)
+			inc_storypoints(issue_status, issue.customfield_10003 || 0)
+			inc_storypoints(:total, issue.customfield_10003 || 0)
+
+			if issue_status == :closed
+				DEV_HASH[assignee][:stories] += 1
+			end
+		when 'story bug'
+			DEV_HASH[assignee][:bugs] += 1
+		end
+	end
+end
+
+def process_issue_data
+	#ehr = get_remaining(:total) / 3600
+
+	days = ((Date.today + 1)..Date.new(2014, 4, 25))
+	set_metrics(:days5, days5 = days.select {|d| (1..5).include?(d.wday) }.size)
+	set_metrics(:days6, days6 = days.select {|d| (1..6).include?(d.wday) }.size)
+
+	set_metrics(:ppd5, ((get_remaining(:total) - get_remaining(:closed)).to_f / (3600 * days5)).round(2))
+	set_metrics(:tpd5, ((get_tasks(:total) - get_tasks(:closed)).to_f / days5).round(2))
+	set_metrics(:spd5, (((get_stories(:total) || 0) - (get_stories(:closed) || 0)).to_f / days5).round(2))
+	set_metrics(:sppd5, (((get_storypoints(:total) || 0) - (get_storypoints(:closed) || 0)).to_f / days5).round(2) )
+	set_metrics(:ppd6, ((get_remaining(:total) - get_remaining(:closed)).to_f / (3600 * days6)).round(2))
+	set_metrics(:tpd6, ((get_tasks(:total) - get_tasks(:closed)).to_f / days6).round(2))
+	set_metrics(:spd6, (((get_stories(:total) || 0) - (get_stories(:closed) || 0)).to_f / days6).round(2))
+	set_metrics(:sppd6, (((get_storypoints(:total) || 0) - (get_storypoints(:closed) || 0)).to_f / days6).round(2) )
+end	
+
+def paint_number(n, colorize = false, reverse = false)
+
+	if n < 0
+    	str = "-#{n.abs}"
+    	color = reverse ? :green : :red
+    elsif n > 0
+    	str = "+#{n.abs}"
+    	color = reverse ? :red : :green
+    else
+    	str = "#{n.abs}"
+    	color = :black
+    end
+    color = :black unless colorize
+    " [#{Paint[str, color]}]"
+end
+
+def metrics_previous(current, index, colorize = false)
+  	if prev_metrics = get_metrics(:previous)
+  		if val = prev_metrics[index].to_f
+	  		n = (current - val).round(2)
+	  		return paint_number(n, colorize, true)
+    	end
+  	end
+  	return ""
+end
+
+def daily_report(previous_exists)
+	delta_label = {:points => {}, :tasks => {}, :stories => {}, :storypoints => {}}
+	[:open, :in_progress, :closed, :total, :in_development, :in_testing].each{ |status|
+		delta_label[:points][status] = ""
+		if previous_exists
+			delta = ((( get_original(status).to_f || 0 ) - ( get_original(:previous)[FIELD_MAP[:original][status]].to_f || 0 )) / 3600).round(2)
+			delta_label[:points][status] = paint_number(delta, (status == :closed))
+		end
+		[:tasks, :stories, :storypoints].each { |table|
+			delta_label[table][status] = ""
+			if previous_exists
+				delta = (get(table, status).to_f || 0) - (get(table, :previous)[FIELD_MAP[table][status]].to_f || 0)
+				delta_label[table][status] = paint_number(delta, (status == :closed))
+			end
+		}
+	}
+	deltas = {}
+	[:stories, :storypoints, :tasks, :original].each {|table|
+		deltas[table] = (get(table, :closed).to_i || 0) - (get(table, :previous)[FIELD_MAP[table][:closed]].to_i || 0)
+	}
+	deltas[:original] = (deltas[:original].to_f / 3600).round(2)
+
+	# build lists of stories that have entered a new state, grouped by state
+	story_lists = {}
+	task_lists = {}
+	[:open, :in_development, :in_testing, :closed].each{|status|
+		if get_storyids(:previous)[FIELD_MAP[:storyids][status]]
+			story_lists[status] = get_storyids(status).split("/") - get_storyids(:previous)[FIELD_MAP[:storyids][status]].split("/")
+		else
+			story_lists[status] = []
+			if get_taskids(:previous)[FIELD_MAP[:taskids][status]]
+				task_lists[status] = get_taskids(status).split("/") - get_taskids(:previous)[FIELD_MAP[:taskids][status]].split("/")
+			else
+				task_lists[status] = []
+			end
+		end
+	}
+
+	# just do a single query
+	issues = []
+	all_stories = (story_lists.values + task_lists.values).inject([]) {|all, list| all + list}
+	if all_stories.size > 0
+		issues = get_jira_client.Issue.jql("key in (#{all_stories.join(',')})", 0, 2000)
+
+		# decorate the labels with summaries
+		[:open, :in_development, :in_testing, :closed].each{|status|
+			new_list = []
+			story_lists[status].each {|story_key|
+				if story_summary = issues.detect{|issue| issue.key == story_key}.summary
+					new_list << "#{story_key} - #{story_summary}"
+				end
+			} if story_lists[status]
+			story_lists[status] = new_list
+
+			new_list = []
+			task_lists[status].each {|task_key|
+				if task_summary = issues.detect{|issue| issue.key == task_key}.summary
+					new_list << "#{task_key} - #{task_summary}"
+				end
+			} if task_lists[status]
+			task_lists[status] = new_list
+		}
+	end
+	
+	puts "\nStory Count [day-over-day delta]:"
+	puts "  Total: #{get_stories(:total)}#{delta_label[:stories][:total]}"
+	puts "  Open: #{get_stories(:open)}#{delta_label[:stories][:open]}"
+	story_lists[:open].each {|issue_key| puts "    #{issue_key}" }
+	puts "  In Development: #{get_stories(:in_development)}#{delta_label[:stories][:in_development]}"
+	story_lists[:in_development].each {|issue_key| puts "    #{issue_key}" }
+	puts "  In Testing: #{get_stories(:in_testing)}#{delta_label[:stories][:in_testing]}"
+	story_lists[:in_testing].each {|issue_key| puts "    #{issue_key}" }
+	puts "  Closed: #{get_stories(:closed)}#{delta_label[:stories][:closed]}"
+	story_lists[:closed].each {|issue_key| puts "    #{issue_key}" }
+	puts "\nStory Points [day-over-day delta]:"
+	puts "  Total: #{get_storypoints(:total)}#{delta_label[:storypoints][:total]}"
+	puts "  Open: #{get_storypoints(:open)}#{delta_label[:storypoints][:open]}"
+	puts "  In Development: #{get_storypoints(:in_development)}#{delta_label[:storypoints][:in_development]}"
+	puts "  In Testing: #{get_storypoints(:in_testing)}#{delta_label[:storypoints][:in_testing]}"
+	puts "  Closed: #{get_storypoints(:closed)}#{delta_label[:storypoints][:closed]}"
+
+	puts "\nTask Count [day-over-day delta]:"
+	puts "  Total: #{get_tasks(:total)}#{delta_label[:tasks][:total]}"
+	puts "  Open: #{get_tasks(:open)}#{delta_label[:tasks][:open]}"
+	task_lists[:open].each {|issue_key| puts "    #{issue_key}" }
+	puts "  In Progress: #{get_tasks(:in_progress)}#{delta_label[:tasks][:in_progress]}"
+	puts "  Closed: #{get_tasks(:closed)}#{delta_label[:tasks][:closed]}"
+	task_lists[:closed].each {|issue_key| puts "    #{issue_key}" }
+
+	puts "\nTask Hours [day-over-day delta]:"
+	puts "  Total: #{get_remaining(:total) / 3600} of #{get_original(:total) / 3600} remaining#{delta_label[:points][:total]}"
+	puts "  Open: #{get_remaining(:open) / 3600}#{delta_label[:points][:open]}"
+	puts "  In Progress: #{get_remaining(:in_progress) / 3600} of #{get_original(:in_progress) / 3600} remaining#{delta_label[:points][:in_progress]}"
+	puts "  Closed: #{get_original(:closed) / 3600}#{delta_label[:points][:closed]}"
+
+	# puts "\nEstimate Accuracy: Actual #{get_timespent(:closed) / 3600} vs Estimated #{get_original(:closed) / 3600} task hours (defaults to 100% accuracy when tasks lack timespent data)"
+
+	puts "\nRequired velocities assuming 5-day work week [day-over-day delta]:"
+	puts "  Work Days until 4/25: #{get_metrics(:days5)}#{metrics_previous(get_metrics(:days5), 1)}"
+	puts "  Stories Closed per Day to make 4/25:"
+	puts "    Required: #{get_metrics(:spd5)}#{metrics_previous(get_metrics(:spd5), 2, true)} (#{get_metrics(:sppd5)}#{metrics_previous(get_metrics(:sppd5), 11, true)} points)"
+	puts "    Closed since last run: #{deltas[:stories]} (#{deltas[:storypoints]} points)"
+	puts "  Tasks Closed per Day to make 4/25:"
+	puts "    Required: #{get_metrics(:tpd5)}#{metrics_previous(get_metrics(:tpd5), 4)}"
+	puts "    Closed since last run: #{deltas[:tasks]}"
+	puts "  Task Hours per Day to make 4/25:"
+	puts "    Required: #{get_metrics(:ppd5)}#{metrics_previous(get_metrics(:ppd5), 3)}"
+	puts "    Closed since last run: #{deltas[:original]}"
+
+	puts "\nRequired velocities assuming 6-day work week [day-over-day delta]:"
+	puts "  Work Days until 4/25: #{get_metrics(:days6)}#{metrics_previous(get_metrics(:days6), 5)}"
+	puts "  Stories Closed per Day to make 4/25:"
+	puts "    Required: #{get_metrics(:spd6)}#{metrics_previous(get_metrics(:spd6), 6, true)} (#{get_metrics(:sppd6)}#{metrics_previous(get_metrics(:sppd6), 12, true)} points)"
+	puts "    Closed since last run: #{deltas[:stories]} (#{deltas[:storypoints]} points)"
+	puts "  Tasks Closed per Day to make 4/25:"
+	puts "    Required: #{get_metrics(:tpd6)}#{metrics_previous(get_metrics(:tpd6), 8)}"
+	puts "    Closed since last run: #{deltas[:tasks]}"
+	puts "  Task Hours per Day to make 4/25:"
+	puts "    Required: #{get_metrics(:ppd6)}#{metrics_previous(get_metrics(:ppd6), 7)}"
+	puts "    Closed since last run: #{deltas[:original]}"
+end
+
+previous_exists = load_historical_data
+load_issue_data
+process_issue_data
+daily_report(previous_exists)
+save_historical_data
