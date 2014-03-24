@@ -6,7 +6,6 @@ require 'csv'
 require 'fileutils'
 require 'jira'
 require 'paint'
-#require 'daily_report'
 
 TODAY = (Date.today - Date.new(1970, 1, 1)).to_i
 
@@ -65,7 +64,7 @@ def load_historical_data
 end
 
 def load_table(table)
-	filename = "hist_#{table}.csv"
+	filename = "data/hist_#{table}.csv"
 	set(table, :history, [])
 	set(table, :previous, {})
 	begin
@@ -83,7 +82,7 @@ end
 
 def save_historical_data
 	[:original, :remaining, :tasks, :stories, :storyids, :taskids, :storypoints].each { |table|
-		CSV.open("hist_#{table}.csv", "wb") { |csv|
+		CSV.open("data/hist_#{table}.csv", "wb") { |csv|
 			get(table, :history).each{|day|
 	    		csv << day if day[0].to_i < TODAY
 	    	}
@@ -91,7 +90,7 @@ def save_historical_data
 		}
 	}
 
-	CSV.open("hist_metrics.csv", "wb") { |csv|
+	CSV.open("data/hist_metrics.csv", "wb") { |csv|
 		get_metrics(:history).each{|day|
 			csv << day if day[0].to_i < TODAY
 		}
