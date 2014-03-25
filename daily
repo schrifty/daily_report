@@ -156,6 +156,8 @@ def load_issue_data
 			DEV_HASH[assignee][:bugs] += 1
 		end
 	end
+
+	process_issue_data
 end
 
 def process_issue_data
@@ -226,16 +228,12 @@ def daily_report(previous_exists)
 	# build lists of stories that have entered a new state, grouped by state
 	story_lists = {}
 	task_lists = {}
-	[:open, :in_development, :in_testing, :closed].each{|status|
+	[:open, :in_development, :in_progress, :in_testing, :closed].each{|status|
 		if get_storyids(:previous)[FIELD_MAP[:storyids][status]]
 			story_lists[status] = get_storyids(status).split("/") - get_storyids(:previous)[FIELD_MAP[:storyids][status]].split("/")
-		else
-			story_lists[status] = []
-			if get_taskids(:previous)[FIELD_MAP[:taskids][status]]
-				task_lists[status] = get_taskids(status).split("/") - get_taskids(:previous)[FIELD_MAP[:taskids][status]].split("/")
-			else
-				task_lists[status] = []
-			end
+		end
+		if get_taskids(:previous)[FIELD_MAP[:taskids][status]]
+			task_lists[status] = get_taskids(status).split("/") - get_taskids(:previous)[FIELD_MAP[:taskids][status]].split("/")
 		end
 	}
 
@@ -244,37 +242,26 @@ def daily_report(previous_exists)
 	all_stories = (story_lists.values + task_lists.values).inject([]) {|all, list| all + list}
 	if all_stories.size > 0
 		issues = get_jira_client.Issue.jql("key in (#{all_stories.join(',')})", 0, 2000)
-
-		# decorate the labels with summaries
-		[:open, :in_development, :in_testing, :closed].each{|status|
-			new_list = []
-			story_lists[status].each {|story_key|
-				if story_summary = issues.detect{|issue| issue.key == story_key}.summary
-					new_list << "#{story_key} - #{story_summary}"
-				end
-			} if story_lists[status]
-			story_lists[status] = new_list
-
-			new_list = []
-			task_lists[status].each {|task_key|
-				if task_summary = issues.detect{|issue| issue.key == task_key}.summary
-					new_list << "#{task_key} - #{task_summary}"
-				end
-			} if task_lists[status]
-			task_lists[status] = new_list
+		[story_lists, task_lists].each {|list|
+			list.keys.each{|status|
+				list[status] = list[status].collect {|key|
+					issue = issues.detect{|issue| issue.key == key}
+					"#{key} - #{issue ? issue.summary : 'Unknown'} (#{issue ? issue.assignee && issue.assignee.displayName : ''})"
+				}
+			}
 		}
 	end
 	
 	puts "\nStory Count [day-over-day delta]:"
 	puts "  Total: #{get_stories(:total)}#{delta_label[:stories][:total]}"
 	puts "  Open: #{get_stories(:open)}#{delta_label[:stories][:open]}"
-	story_lists[:open].each {|issue_key| puts "    #{issue_key}" }
+	story_lists[:open].each {|issue_key| puts "    #{issue_key}" } if story_lists[:open]
 	puts "  In Development: #{get_stories(:in_development)}#{delta_label[:stories][:in_development]}"
-	story_lists[:in_development].each {|issue_key| puts "    #{issue_key}" }
+	story_lists[:in_development].each {|issue_key| puts "    #{issue_key}" } if story_lists[:in_development]
 	puts "  In Testing: #{get_stories(:in_testing)}#{delta_label[:stories][:in_testing]}"
-	story_lists[:in_testing].each {|issue_key| puts "    #{issue_key}" }
+	story_lists[:in_testing].each {|issue_key| puts "    #{issue_key}" } if story_lists[:in_testing]
 	puts "  Closed: #{get_stories(:closed)}#{delta_label[:stories][:closed]}"
-	story_lists[:closed].each {|issue_key| puts "    #{issue_key}" }
+	story_lists[:closed].each {|issue_key| puts "    #{issue_key}" } if story_lists[:closed]
 	puts "\nStory Points [day-over-day delta]:"
 	puts "  Total: #{get_storypoints(:total)}#{delta_label[:storypoints][:total]}"
 	puts "  Open: #{get_storypoints(:open)}#{delta_label[:storypoints][:open]}"
@@ -285,10 +272,11 @@ def daily_report(previous_exists)
 	puts "\nTask Count [day-over-day delta]:"
 	puts "  Total: #{get_tasks(:total)}#{delta_label[:tasks][:total]}"
 	puts "  Open: #{get_tasks(:open)}#{delta_label[:tasks][:open]}"
-	task_lists[:open].each {|issue_key| puts "    #{issue_key}" }
+	task_lists[:open].each {|issue_key| puts "    #{issue_key}" } if task_lists[:open]
 	puts "  In Progress: #{get_tasks(:in_progress)}#{delta_label[:tasks][:in_progress]}"
+	task_lists[:in_progress].each {|issue_key| puts "    #{issue_key}" } if task_lists[:in_progress]
 	puts "  Closed: #{get_tasks(:closed)}#{delta_label[:tasks][:closed]}"
-	task_lists[:closed].each {|issue_key| puts "    #{issue_key}" }
+	task_lists[:closed].each {|issue_key| puts "    #{issue_key}" } if task_lists[:closed]
 
 	puts "\nTask Hours [day-over-day delta]:"
 	puts "  Total: #{get_remaining(:total) / 3600} of #{get_original(:total) / 3600} remaining#{delta_label[:points][:total]}"
@@ -304,10 +292,10 @@ def daily_report(previous_exists)
 	puts "    Required: #{get_metrics(:spd5)}#{metrics_previous(get_metrics(:spd5), 2, true)} (#{get_metrics(:sppd5)}#{metrics_previous(get_metrics(:sppd5), 11, true)} points)"
 	puts "    Closed since last run: #{deltas[:stories]} (#{deltas[:storypoints]} points)"
 	puts "  Tasks Closed per Day to make 4/25:"
-	puts "    Required: #{get_metrics(:tpd5)}#{metrics_previous(get_metrics(:tpd5), 4)}"
+	puts "    Required: #{get_metrics(:tpd5)}#{metrics_previous(get_metrics(:tpd5), 4, true)}"
 	puts "    Closed since last run: #{deltas[:tasks]}"
 	puts "  Task Hours per Day to make 4/25:"
-	puts "    Required: #{get_metrics(:ppd5)}#{metrics_previous(get_metrics(:ppd5), 3)}"
+	puts "    Required: #{get_metrics(:ppd5)}#{metrics_previous(get_metrics(:ppd5), 3, true	)}"
 	puts "    Closed since last run: #{deltas[:original]}"
 
 	puts "\nRequired velocities assuming 6-day work week [day-over-day delta]:"
@@ -316,15 +304,14 @@ def daily_report(previous_exists)
 	puts "    Required: #{get_metrics(:spd6)}#{metrics_previous(get_metrics(:spd6), 6, true)} (#{get_metrics(:sppd6)}#{metrics_previous(get_metrics(:sppd6), 12, true)} points)"
 	puts "    Closed since last run: #{deltas[:stories]} (#{deltas[:storypoints]} points)"
 	puts "  Tasks Closed per Day to make 4/25:"
-	puts "    Required: #{get_metrics(:tpd6)}#{metrics_previous(get_metrics(:tpd6), 8)}"
+	puts "    Required: #{get_metrics(:tpd6)}#{metrics_previous(get_metrics(:tpd6), 8, true)}"
 	puts "    Closed since last run: #{deltas[:tasks]}"
 	puts "  Task Hours per Day to make 4/25:"
-	puts "    Required: #{get_metrics(:ppd6)}#{metrics_previous(get_metrics(:ppd6), 7)}"
+	puts "    Required: #{get_metrics(:ppd6)}#{metrics_previous(get_metrics(:ppd6), 7, true)}"
 	puts "    Closed since last run: #{deltas[:original]}"
 end
 
 previous_exists = load_historical_data
 load_issue_data
-process_issue_data
 daily_report(previous_exists)
 save_historical_data
