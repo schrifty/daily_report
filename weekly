@@ -22,7 +22,22 @@ end
 
 STATS = {}
 FIELD_MAP = {}
-FIELD_MAP[:weekly_metrics] = {:dt => 0, :current_story_count => 1, :current_story_points => 2, :current_estimate_hours => 3}
+FIELD_MAP[:weekly_metrics] = {
+	:dt => 0,
+	:current_story_count => 1,
+	:current_story_points => 2,
+	:current_estimate_days => 3,
+	:current_pushed_bugs => 4,
+	:story_points_closed => 5,
+	:current_timespent_days => 6,
+	:current_sprint_defects => 7,
+	:all_pushed_bugs => 8,
+	:previously_completed_stories => 9,
+	:previously_completed_points => 10,
+	:all_sprints_spent_days => 11,
+	:previously_found_defects => 12
+}
+
 def get(table, key)
 	STATS[table] ||= []
 	if key
@@ -85,90 +100,97 @@ end
 
 DEV_HASH= {}
 def load_issue_data
-	issues = get_jira_client.Issue.jql('project = Development AND (issuetype in ("Story Bug", "Technical task") AND fixVersion = "UX 7.0 - Q1 Milestone" OR issuetype = Story AND "Epic Link" in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044))', 0, 2000)
-	issues.each do |issue|
-    	next unless issue_status = issue.status.name
-    	next unless issue.key =~ /DEV-/
+	# issues = get_jira_client.Issue.jql('project = Development AND (issuetype in ("Story Bug", "Technical task") AND fixVersion = "UX 7.0 - Q1 Milestone" OR issuetype = Story AND "Epic Link" in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044))', 0, 2000)
+	# issues.each do |issue|
+ #    	next unless issue_status = issue.status.name
+ #    	next unless issue.key =~ /DEV-/
 
-	    issue_status = issue_status.downcase.gsub(" ", "_").to_sym
-		assignee = issue.assignee ? issue.assignee.displayName : "Unknown"
-		DEV_HASH[assignee] ||= {:stories => 0, :tasks => 0, :original => 0, :timespent => 0, :bugs => 0}
+	#     issue_status = issue_status.downcase.gsub(" ", "_").to_sym
+	# 	assignee = issue.assignee ? issue.assignee.displayName : "Unknown"
+	# 	DEV_HASH[assignee] ||= {:stories => 0, :tasks => 0, :original => 0, :timespent => 0, :bugs => 0}
 
-    	case issue.issuetype.name.downcase
-    	when 'technical task'
-	    	issue_status = :in_progress if [:information_needed, :in_code_read, :resolved].include? issue_status
-	    	issue_status = :open if [:reopened].include? issue_status
+ #    	case issue.issuetype.name.downcase
+ #    	when 'technical task'
+	#     	issue_status = :in_progress if [:information_needed, :in_code_read, :resolved].include? issue_status
+	#     	issue_status = :open if [:reopened].include? issue_status
 
-	    	# default timespent to 100% accuracy if it's not provided
-	    	# issue.timeestimate => remaining
-	    	# issue.timeoriginalestimate => original
-	    	# issue.timespent -> timespent
-    		val = issue.timeestimate.to_i
-    		inc(:remaining, issue_status, val)
-    		inc(:remaining, :total, val)
+	#     	# default timespent to 100% accuracy if it's not provided
+	#     	# issue.timeestimate => remaining
+	#     	# issue.timeoriginalestimate => original
+	#     	# issue.timespent -> timespent
+ #    		val = issue.timeestimate.to_i
+ #    		inc(:remaining, issue_status, val)
+ #    		inc(:remaining, :total, val)
 
-    		val = issue.timeoriginalestimate.to_i
-    		inc(:original, issue_status, val)
-    		inc(:original, :total, val)
+ #    		val = issue.timeoriginalestimate.to_i
+ #    		inc(:original, issue_status, val)
+ #    		inc(:original, :total, val)
 
-    		val = (issue.timespent || issue.timeoriginalestimate).to_i
-    		inc(:timespent, issue_status, val)
-    		inc(:timespent, :total, val)
+ #    		val = (issue.timespent || issue.timeoriginalestimate).to_i
+ #    		inc(:timespent, issue_status, val)
+ #    		inc(:timespent, :total, val)
 
-			inc_tasks(issue_status, 1)
-			inc_tasks(:total, 1)
+	# 		inc_tasks(issue_status, 1)
+	# 		inc_tasks(:total, 1)
 
-			cat_taskids(issue_status, issue.key)
+	# 		cat_taskids(issue_status, issue.key)
 
-			# assignee stats
-			if issue_status == :closed
-				DEV_HASH[assignee][:tasks] += 1
-				DEV_HASH[assignee][:original] += issue.timeoriginalestimate.to_i
-				DEV_HASH[assignee][:timespent] += (issue.timespent || issue.timeoriginalestimate).to_i
-			end
-		when 'story'
-			inc_stories(issue_status, 1)
-			inc_stories(:total, 1)
+	# 		# assignee stats
+	# 		if issue_status == :closed
+	# 			DEV_HASH[assignee][:tasks] += 1
+	# 			DEV_HASH[assignee][:original] += issue.timeoriginalestimate.to_i
+	# 			DEV_HASH[assignee][:timespent] += (issue.timespent || issue.timeoriginalestimate).to_i
+	# 		end
+	# 	when 'story'
+	# 		inc_stories(issue_status, 1)
+	# 		inc_stories(:total, 1)
 
-			cat_storyids(issue_status, issue.key)
-			inc_storypoints(issue_status, issue.customfield_10003 || 0)
-			inc_storypoints(:total, issue.customfield_10003 || 0)
+	# 		cat_storyids(issue_status, issue.key)
+	# 		inc_storypoints(issue_status, issue.customfield_10003 || 0)
+	# 		inc_storypoints(:total, issue.customfield_10003 || 0)
 
-			if issue_status == :closed
-				DEV_HASH[assignee][:stories] += 1
-			end
-		when 'story bug'
-			DEV_HASH[assignee][:bugs] += 1
-		end
-	end
+	# 		if issue_status == :closed
+	# 			DEV_HASH[assignee][:stories] += 1
+	# 		end
+	# 	when 'story bug'
+	# 		DEV_HASH[assignee][:bugs] += 1
+	# 	end
+	# end
 
 	process_issue_data
 end
 
 def process_issue_data
+	sprint_start = '2014/03/17 01:00'
 
-end	
+	current_stories              = get_jira_client.Issue.jql("sprint in openSprints() AND issuetype = Story AND 'Epic Link' in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044)")
+	current_tasks                = get_jira_client.Issue.jql("sprint in openSprints() AND issuetype = 'Technical task' AND fixVersion = 'UX 7.0 - Q1 Milestone'")
+	current_completed_work       = get_jira_client.Issue.jql("sprint in openSprints() AND issuetype in ('technical task', 'story bug') AND fixVersion = 'UX 7.0 - Q1 Milestone' AND status = 'closed'")
+	current_sprint_defects       = get_jira_client.Issue.jql("sprint in openSprints() AND issuetype = 'Story Bug' AND priority = Critical AND fixVersion = 'UX 7.0 - Q1 Milestone'")
+	current_pushed_bugs          = get_jira_client.Issue.jql("issuetype = Bug AND status != Closed AND 'Epic Link' in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044) AND createdDate >= '#{sprint_start}'")
+	previously_completed_stories = get_jira_client.Issue.jql("sprint in closedSprints() AND issuetype = Story AND status = 'closed' AND 'Epic Link' in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044)")
+	previously_found_defects     = get_jira_client.Issue.jql("sprint in closedSprints() AND issuetype = 'Story Bug' AND priority = Critical AND fixVersion = 'UX 7.0 - Q1 Milestone'")
+	previously_completed_tasks   = get_jira_client.Issue.jql("sprint in closedSprints() AND issuetype in ('Technical task', 'Story Bug') AND fixVersion = 'UX 7.0 - Q1 Milestone'")
+	all_pushed_bugs              = get_jira_client.Issue.jql("issuetype = Bug AND fixVersion = 'UX 7.0 - Q1 Milestone' AND status != Closed AND 'Epic Link' in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044)")
+    all_stories                  = get_jira_client.Issue.jql("issuetype = Story AND 'Epic Link' in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044)")
 
-def weekly_report(previous_exists)
 	# Current Sprint Story Count - X of Y where X is number of stories currently completed in the current sprint and Y is the total number of committed stories in the current sprint
-	current_sprint_stories = get_jira_client.Issue.jql("Sprint in openSprints() AND issuetype = Story AND 'Epic Link' in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044)")
-	set_weekly_metrics(:current_story_count, current_sprint_stories.size)
+	set_weekly_metrics(:current_story_count, current_stories.size)
 
 	# Story Points Committed - sum of the story points for the stories in the sprint commit
-	current_story_points = current_sprint_stories.inject(0) {|total, story| total + story.customfield_10003}
+	current_story_points = current_stories.inject(0) {|total, story| total + (story.customfield_10003 || 0)}.round(0)
 	set_weekly_metrics(:current_story_points, current_story_points)
 
 	# Estimated Sprint Effort Days - total number of hours expected to be worked by the team (for each team member, total allocated sprint working hours divided by 6)
-	current_tasks = get_jira_client.Issue.jql("Sprint in openSprints() AND issuetype = 'Technical task' AND fixVersion = 'UX 7.0 - Q1 Milestone'")
-	current_estimate_hours = current_tasks.inject(0) {|total, task| total + task.timeoriginalestimate.to_i}
-	set_weekly_metrics(:current_estimate_hours, current_estimate_hours) 
+	current_estimate_hours = current_tasks.inject(0.0) {|total, task| total + (task.timeoriginalestimate.to_f || 0.0)} / 3600.0
+	current_estimate_days = (current_estimate_hours / 6.0).round(0)
+	set_weekly_metrics(:current_estimate_days, current_estimate_days) 
 
 	# Sprint End Date - date of last day of work in the two week interval
 
 	# Carried Bugs - for sprint-committed stories carried from one sprint to the next, how many unshippable bugs
 
 	# Current Sprint Pushed Defects - count of shippable bugs pushed off to hardening during current sprint (gets added to total when closing out sprint)
-	current_pushed_bugs = get_jira_client.Issue.jql("sprint is EMPTY AND issuetype = Bug AND fixVersion = 'UX 7.0 - Q1 Milestone' AND status != Closed AND 'Epic Link' in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044) AND createdDate >= '2014/03/17 01:00'")
 	set_weekly_metrics(:current_pushed_bugs, current_pushed_bugs.size)
 
 	# Current Sprint Pushed Days - days of work expected to be accomplished during this sprint that will not be (accounts for loss from discovered work, scope creep, days not worked, etc)
@@ -177,36 +199,62 @@ def weekly_report(previous_exists)
 	# Sprint Days Not Worked - days planned to be worked during current sprint, but were not due to diversion to other projects/issues, or illness, absence, travel, etc.
 
 	# Current Sprint Story Points Closed - sum of points for stories that were made DONE during current sprint
-	story_points_closed = current_sprint_stories.select{|story| story.status == 'Closed'}.inject(0) {|total, story| total + story.customfield_10003}
+	story_points_closed = current_stories.select{|story| story.status == 'closed'}.inject(0) {|total, story| total + (story.customfield_10003 || 0)}.round(0)
 	set_weekly_metrics(:story_points_closed, story_points_closed)
 
 	# Current Sprint Total Effort Days Closed - sum of days logged to sprint tasks that are DONE (includes bug time)
+	current_completed_work_hours = current_completed_work.inject(0.0) {|total, task| total + (task.timespent || 0)} / 3600.0
+	current_completed_work_days = (current_completed_work_hours / 6.0).round(0)
+	set_weekly_metrics(:current_timespent_days, current_completed_work_days)
 
 	# Defects After Dev Complete - defects found in current sprint on stories after QA handoff but before the a story was DONE
-	current_sprint_defects = get_jira_client.Issue.jql("Sprint in openSprints() AND issuetype = 'Story Bug' AND priority = Critical AND fixVersion = 'UX 7.0 - Q1 Milestone')"
-	set_weekly_metrics(:current_sprint_defects, current_sprint_defects)
+	set_weekly_metrics(:current_sprint_defects, current_sprint_defects.size)
 
 	# Total Hardening planned days - number of calendar days available for hardening, given the team's story complete date. - can this cut into buffer? anything else?
 	# Total Hardening planned bug capacity - estimated number of bugs that can be fixed given the calendar days available. (can be formula)
 
 	# Total Pushed Defects - for all closed sprints: count of shippable defects that have been pushed out of stories and into hardening.
-	total_pushed_bugs = get_jira_client.Issue.jql("sprint is EMPTY AND issuetype = Bug AND fixVersion = 'UX 7.0 - Q1 Milestone' AND status != Closed AND 'Epic Link' in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044)")
-	set_weekly_metrics(:total_pushed_bugs, total_pushed_bugs.size)
+	set_weekly_metrics(:all_pushed_bugs, all_pushed_bugs.size)
 
 	# Total Completed Stories - for all closed sprints: X of Y where X is a count of stories that are DONE and Y is a count of the total stories to do
-	closed_sprint_completed_stories = get_jira_client.Issue.jql("Sprint is not EMPTY AND issuetype = Story AND status = 'Closed' AND 'Epic Link' in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044)")
-	set_weekly_metrics(:closed_sprint_completed_stories, closed_sprint_completed_stories.size)
+	set_weekly_metrics(:previously_completed_stories, "#{previously_completed_stories.size} of #{all_stories.size}")
 
 	# Total Story Points Closed for This Project - for all closed sprints: sum of story points for stories that are DONE
+	previously_completed_points = previously_completed_stories.inject(0) {|total, story| total + (story.customfield_10003 || 0)}.round(0)
+	total_story_points = all_stories.inject(0) {|total, story| total + (story.customfield_10003 || 0)}.round(0)
+	set_weekly_metrics(:previously_completed_points, "#{previously_completed_points} of #{total_story_points}")
+
 	# Total Pushed Days - for all closed sprints: sum of extra man-days that need to be worked in order to be on plan (can be negative)
 	# Total Discovered Work Days - for all closed sprints: sum of days of work necessary to complete existing stories/criteria that was not accounted for in the original plan
 	# Total New Scope Days - for all closed sprints: sum of days needed to work beyond original plan due to added/changed stories/criteria
+
 	# Total Effort Days for this Project - for all closed sprints: sum of hours committed to completing the project (includes story tasks and bug fixing)
+	all_sprints_spent_hours = previously_completed_tasks.inject(0.0) {|total, task| total + (task.timespent.to_f || 0.0)} / 3600.0
+	all_sprints_spent_days = (all_sprints_spent_hours / 6.0).round(0)
+	set_weekly_metrics(:all_sprints_spent_days, all_sprints_spent_days) 
+
 	# Total Defects after Dev Complete - for all closed sprints: count of bugs found while stories were in the Testing part of the workflow
+	set_weekly_metrics(:previously_found_defects, previously_found_defects.size)
+
 	# Total Defects after Testing Complete - for all closed sprints: count of bugs filed for stories already marked DONE
+end	
+
+def weekly_report
+	puts "Current Sprint Story Count: #{get_weekly_metrics(:current_story_count)}"
+	puts "Story Points Committed: #{get_weekly_metrics(:current_story_points)}"
+	puts "Estimated Sprint Effort Days: #{get_weekly_metrics(:current_estimate_days)}"
+	puts "Current Sprint Pushed Defects: #{get_weekly_metrics(:current_pushed_bugs)}"
+	puts "Current Sprint Story Points Closed: #{get_weekly_metrics(:story_points_closed)}"
+	puts "Current Sprint Total Effort Days Closed: #{get_weekly_metrics(:current_timespent_days)}"
+	puts "Defects after Dev Complete: #{get_weekly_metrics(:current_sprint_defects)}"
+	puts "Total Pushed Defects: #{get_weekly_metrics(:all_pushed_bugs)}"
+	puts "Total Completed Stories: #{get_weekly_metrics(:previously_completed_stories)}"
+	puts "Total Story Points Closed for this Project: #{get_weekly_metrics(:previously_completed_points)}"
+	puts "Total Effort Days for this Project: #{get_weekly_metrics(:all_sprints_spent_days)}"
+	puts "Total Defects after Dev Complete: #{get_weekly_metrics(:previously_found_defects)}"
 end
 
-previous_exists = load_historical_data
+#previous_exists = load_historical_data
 load_issue_data
-weekly_report(previous_exists)
-save_historical_data
+weekly_report
+#save_historical_data
