@@ -8,6 +8,9 @@ require 'jira'
 require 'paint'
 
 TODAY = (Date.today - Date.new(1970, 1, 1)).to_i
+DEFAULT_STORY_POINTS = 8
+DEFAULT_TASK_HOURS = 2
+DEFAULT_AGGREGATE_HOURS = 9
 
 def get_jira_client
 	JIRA::Client.new(options = {
@@ -30,7 +33,8 @@ FIELD_MAP[:stories] = {:dt => 0, :total => 1, :open => 2, :in_progress => 3, :in
 FIELD_MAP[:storyids] = {:dt => 0, :total => 1, :open => 2, :in_progress => 3, :in_development => 4, :in_testing => 5, :closed => 6, :history => 7, :previous => 8}
 FIELD_MAP[:taskids] = {:dt => 0, :total => 1, :open => 2, :in_progress => 3, :in_development => 4, :in_testing => 5, :closed => 6, :history => 7, :previous => 8}
 FIELD_MAP[:storypoints] = {:dt => 0, :total => 1, :open => 2, :in_progress => 3, :in_development => 4, :in_testing => 5, :closed => 6, :history => 7, :previous => 8}
-FIELD_MAP[:metrics] = {:dt => 0, :days5 => 1, :spd5 => 2, :ppd5 => 3, :tpd5 => 4, :days6 => 5, :spd6 => 6, :ppd6 => 7, :tpd6 => 8, :history => 9, :previous => 10, :sppd5 => 11, :sppd6 => 12}
+FIELD_MAP[:metrics] = {:dt => 0, :days5 => 1, :spd5 => 2, :ppd5 => 3, :tpd5 => 4, :days6 => 5, :spd6 => 6, :ppd6 => 7, :tpd6 => 8, :sppd5 => 9, :sppd6 => 10, :history => 11, :previous => 12 }
+FIELD_MAP[:bugids] = {:dt => 0, :total => 1, :open => 2, :in_progress => 3, :in_development => 4, :in_testing => 5, :closed => 6, :resolved => 7, :history => 8, :previous => 9}
 def get(table, key)
 	STATS[table] ||= []
 	if key
@@ -56,7 +60,7 @@ end
 def load_historical_data
 	# load historical data
 	previous_exists = true
-	[:original, :remaining, :tasks, :stories, :storypoints, :storyids, :taskids, :metrics].each{ |stat|
+	(FIELD_MAP.keys - [:remaining]).each{|stat|
 		table_exists = load_table(stat)
 		previous_exists &&= table_exists
 	}
@@ -81,7 +85,7 @@ def load_table(table)
 end
 
 def save_historical_data
-	[:original, :remaining, :tasks, :stories, :storyids, :taskids, :storypoints].each { |table|
+	(FIELD_MAP.keys - [:remaining, :metrics]).each { |table|
 		CSV.open("data/hist_#{table}.csv", "wb") { |csv|
 			get(table, :history).each{|day|
 	    		csv << day if day[0].to_i < TODAY
@@ -94,13 +98,14 @@ def save_historical_data
 		get_metrics(:history).each{|day|
 			csv << day if day[0].to_i < TODAY
 		}
-		csv << [TODAY, get_metrics(:days5), get_metrics(:spd5), get_metrics(:ppd5), get_metrics(:tpd5), get_metrics(:days6), get_metrics(:spd6), get_metrics(:ppd6), get_metrics(:tpd6)]
+		csv << [TODAY, get_metrics(:days5), get_metrics(:spd5), get_metrics(:ppd5), get_metrics(:tpd5), get_metrics(:days6), get_metrics(:spd6), get_metrics(:ppd6), get_metrics(:tpd6), get_metrics(:sppd5), get_metrics(:sppd6)]
 	}
 end
 
 DEV_HASH= {}
 def load_issue_data
-	issues = get_jira_client.Issue.jql('project = Development AND (issuetype in ("Story Bug", "Technical task") AND fixVersion = "UX 7.0 - Q1 Milestone" OR issuetype = Story AND "Epic Link" in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044))', 0, 2000)
+	issues = get_jira_client.Issue.jql('project = Development AND ((issuetype in ("Story Bug", "Technical task") AND fixVersion = "UX 7.0 - Q1 Milestone") OR (issuetype = Story AND "Epic Link" in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044)))', 0, 2000)
+	missing_estimates = missing_sizings = missing_taskings = 0
 	issues.each do |issue|
     	next unless issue_status = issue.status.name
     	next unless issue.key =~ /DEV-/
@@ -114,6 +119,8 @@ def load_issue_data
 	    	issue_status = :in_progress if [:information_needed, :in_code_read, :resolved].include? issue_status
 	    	issue_status = :open if [:reopened].include? issue_status
 
+			# puts "WARNING: #{issue.key} task estimated at zero" if issue_status ==:open && ! issue.timeoriginalestimate
+
 	    	# default timespent to 100% accuracy if it's not provided
 	    	# issue.timeestimate => remaining
 	    	# issue.timeoriginalestimate => original
@@ -122,11 +129,17 @@ def load_issue_data
     		inc(:remaining, issue_status, val)
     		inc(:remaining, :total, val)
 
+    		# if a task isn't estimated and it's still open, use the average task value of 2 hours
     		val = issue.timeoriginalestimate.to_i
+    		if issue_status == :open && val == 0
+    			missing_estimates += 1
+    			val = DEFAULT_TASK_HOURS * 3600
+    		end
     		inc(:original, issue_status, val)
     		inc(:original, :total, val)
 
-    		val = (issue.timespent || issue.timeoriginalestimate).to_i
+    		# default timespent to the original estimate if it has not been provided
+    		val = (issue.timespent || val.to_s).to_i
     		inc(:timespent, issue_status, val)
     		inc(:timespent, :total, val)
 
@@ -142,28 +155,55 @@ def load_issue_data
 				DEV_HASH[assignee][:timespent] += (issue.timespent || issue.timeoriginalestimate).to_i
 			end
 		when 'story'
+			# puts "WARNING: #{issue.key} has no story points" if issue_status == :open && ! issue.customfield_10003
+			if issue_status == :open
+				if ! issue.aggregatetimeoriginalestimate || issue.aggregatetimeoriginalestimate == 0
+					puts "WARNING: #{issue.key} missing tasking" 
+					missing_taskings += 1
+					val = (3600 * DEFAULT_AGGREGATE_HOURS)
+					inc(:original, issue_status, val)
+					inc(:original, :total, val)
+					inc(:remaining, issue_status, val)
+					inc(:remaining, :total, val)
+				end
+			end
+
 			inc_stories(issue_status, 1)
 			inc_stories(:total, 1)
 
 			cat_storyids(issue_status, issue.key)
-			inc_storypoints(issue_status, issue.customfield_10003 || 0)
-			inc_storypoints(:total, issue.customfield_10003 || 0)
+
+    		val = issue.customfield_10003
+    		if issue_status == :open && ! val
+    			missing_sizings += 1
+    			val = DEFAULT_STORY_POINTS
+    		end
+			inc_storypoints(issue_status, val || 0)
+			inc_storypoints(:total, val || 0)
 
 			if issue_status == :closed
 				DEV_HASH[assignee][:stories] += 1
 			end
 		when 'story bug'
+	    	if ['blocker', 'critical'].include? issue.priority.name.downcase
+		    	issue_status = :in_progress if [:information_needed, :in_code_read, :resolved].include? issue_status
+		    	issue_status = :open if [:reopened].include? issue_status
+				cat_bugids(issue_status, issue.key)
+			end
+
 			DEV_HASH[assignee][:bugs] += 1
 		end
 	end
+
+	puts "WARNING: Default estimate value (#{DEFAULT_TASK_HOURS} hours) used for #{missing_estimates} unestimated tasks" if missing_estimates > 0
+	puts "WARNING: Default story point value (#{DEFAULT_STORY_POINTS} points) used for #{missing_sizings} unsized stories" if missing_sizings > 0
+	puts "WARNING: Default total aggregate tasking value (#{DEFAULT_AGGREGATE_HOURS} hours) used for #{missing_taskings} untasked stories" if missing_taskings > 0
 
 	process_issue_data
 end
 
 def process_issue_data
-	#ehr = get_remaining(:total) / 3600
-
-	days = ((Date.today + 1)..Date.new(2014, 4, 25))
+	days = ((Date.today + 1)..Date.new(2014, 5, 23))
 	set_metrics(:days5, days5 = days.select {|d| (1..5).include?(d.wday) }.size)
 	set_metrics(:days6, days6 = days.select {|d| (1..6).include?(d.wday) }.size)
 
@@ -178,7 +218,6 @@ def process_issue_data
 end	
 
 def paint_number(n, colorize = false, reverse = false)
-
 	if n < 0
     	str = "-#{n.abs}"
     	color = reverse ? :green : :red
@@ -204,12 +243,15 @@ def metrics_previous(current, index, colorize = false)
 end
 
 def daily_report(previous_exists)
-	delta_label = {:points => {}, :tasks => {}, :stories => {}, :storypoints => {}}
+	delta_label = {:points => {}, :tasks => {}, :stories => {}, :storypoints => {}, :bugs => {}}
 	[:open, :in_progress, :closed, :total, :in_development, :in_testing].each{ |status|
 		delta_label[:points][status] = ""
+		delta_label[:bugs][status] = ""
 		if previous_exists
 			delta = ((( get_original(status).to_f || 0 ) - ( get_original(:previous)[FIELD_MAP[:original][status]].to_f || 0 )) / 3600).round(2)
 			delta_label[:points][status] = paint_number(delta, (status == :closed))
+			delta = (get_bugids(status) || "").split("/").size - (get_bugids(:previous)[FIELD_MAP[:bugids][status]] || "").split("/").size
+			delta_label[:bugs][status] = paint_number(delta, true, (status != :closed))
 		end
 		[:tasks, :stories, :storypoints].each { |table|
 			delta_label[table][status] = ""
@@ -228,25 +270,35 @@ def daily_report(previous_exists)
 	# build lists of stories that have entered a new state, grouped by state
 	story_lists = {}
 	task_lists = {}
+	bug_lists = {}
 	[:open, :in_development, :in_progress, :in_testing, :closed].each{|status|
-		if get_storyids(:previous)[FIELD_MAP[:storyids][status]]
+		if get_bugids(status) && get_bugids(:previous)[FIELD_MAP[:bugids][status]]
+			bug_lists[status] = get_bugids(status).split("/") - get_bugids(:previous)[FIELD_MAP[:bugids][status]].split("/")
+		end
+		if get_storyids(status) && get_storyids(:previous)[FIELD_MAP[:storyids][status]]
 			story_lists[status] = get_storyids(status).split("/") - get_storyids(:previous)[FIELD_MAP[:storyids][status]].split("/")
 		end
-		if get_taskids(:previous)[FIELD_MAP[:taskids][status]]
+		if get_taskids(status) && get_taskids(:previous)[FIELD_MAP[:taskids][status]]
 			task_lists[status] = get_taskids(status).split("/") - get_taskids(:previous)[FIELD_MAP[:taskids][status]].split("/")
 		end
 	}
-
-	# just do a single query
-	issues = []
-	all_stories = (story_lists.values + task_lists.values).inject([]) {|all, list| all + list}
+	all_stories = (story_lists.values + task_lists.values + bug_lists.values).inject([]) {|all, list| all + list}
 	if all_stories.size > 0
 		issues = get_jira_client.Issue.jql("key in (#{all_stories.join(',')})", 0, 2000)
-		[story_lists, task_lists].each {|list|
+		[story_lists, task_lists, bug_lists].each {|list|
 			list.keys.each{|status|
 				list[status] = list[status].collect {|key|
 					issue = issues.detect{|issue| issue.key == key}
-					"#{key} - #{issue ? issue.summary : 'Unknown'} (#{issue ? issue.assignee && issue.assignee.displayName : ''})"
+					puts "WARNING: Couldn't find #{key} to get summary of issue referenced in report" unless issue
+					size = case issue.issuetype.name.downcase
+					when 'story'
+						"(#{issue.customfield_10003} points)"
+					when 'technical task'
+						"(#{(issue.timeoriginalestimate .to_f/ 3600.0).round(0)} hours)"
+					else
+						""
+					end
+					"#{key} - #{issue ? issue.summary : 'Unknown'} (#{issue ? issue.assignee && issue.assignee.displayName : ''}) #{size}"
 				}
 			}
 		}
@@ -284,29 +336,37 @@ def daily_report(previous_exists)
 	puts "  In Progress: #{get_remaining(:in_progress) / 3600} of #{get_original(:in_progress) / 3600} remaining#{delta_label[:points][:in_progress]}"
 	puts "  Closed: #{get_original(:closed) / 3600}#{delta_label[:points][:closed]}"
 
+	puts "\nCritical/Blocker Defects:"
+	puts "  Open: #{get_bugids(:open).split('/').size}#{delta_label[:bugs][:open]}"
+	bug_lists[:open].each {|issue_key| puts "    #{issue_key}" } if bug_lists[:open]
+	puts "  In Progress: #{get_bugids(:in_progress).split('/').size}#{delta_label[:bugs][:in_progress]}"
+	bug_lists[:in_progress].each {|issue_key| puts "    #{issue_key}" } if bug_lists[:in_progress]
+	puts "  Closed: #{get_bugids(:closed).split('/').size}#{delta_label[:bugs][:closed]}"
+	bug_lists[:closed].each {|issue_key| puts "    #{issue_key}" } if bug_lists[:closed]
+
 	# puts "\nEstimate Accuracy: Actual #{get_timespent(:closed) / 3600} vs Estimated #{get_original(:closed) / 3600} task hours (defaults to 100% accuracy when tasks lack timespent data)"
 
 	puts "\nRequired velocities assuming 5-day work week [day-over-day delta]:"
-	puts "  Work Days until 4/25: #{get_metrics(:days5)}#{metrics_previous(get_metrics(:days5), 1)}"
-	puts "  Stories Closed per Day to make 4/25:"
-	puts "    Required: #{get_metrics(:spd5)}#{metrics_previous(get_metrics(:spd5), 2, true)} (#{get_metrics(:sppd5)}#{metrics_previous(get_metrics(:sppd5), 11, true)} points)"
+	puts "  Work Days until 5/23: #{get_metrics(:days5)}#{metrics_previous(get_metrics(:days5), 1)}"
+	puts "  Stories Closed per Day to make 5/23:"
+	puts "    Required: #{get_metrics(:spd5)}#{metrics_previous(get_metrics(:spd5), 2, true)} (#{get_metrics(:sppd5)}#{metrics_previous(get_metrics(:sppd5), 9, true)} points)"
 	puts "    Closed since last run: #{deltas[:stories]} (#{deltas[:storypoints]} points)"
-	puts "  Tasks Closed per Day to make 4/25:"
+	puts "  Tasks Closed per Day to make 5/23:"
 	puts "    Required: #{get_metrics(:tpd5)}#{metrics_previous(get_metrics(:tpd5), 4, true)}"
 	puts "    Closed since last run: #{deltas[:tasks]}"
-	puts "  Task Hours per Day to make 4/25:"
+	puts "  Task Hours per Day to make 5/23:"
 	puts "    Required: #{get_metrics(:ppd5)}#{metrics_previous(get_metrics(:ppd5), 3, true	)}"
 	puts "    Closed since last run: #{deltas[:original]}"
 
 	puts "\nRequired velocities assuming 6-day work week [day-over-day delta]:"
-	puts "  Work Days until 4/25: #{get_metrics(:days6)}#{metrics_previous(get_metrics(:days6), 5)}"
-	puts "  Stories Closed per Day to make 4/25:"
-	puts "    Required: #{get_metrics(:spd6)}#{metrics_previous(get_metrics(:spd6), 6, true)} (#{get_metrics(:sppd6)}#{metrics_previous(get_metrics(:sppd6), 12, true)} points)"
+	puts "  Work Days until 5/23: #{get_metrics(:days6)}#{metrics_previous(get_metrics(:days6), 5)}"
+	puts "  Stories Closed per Day to make 5/23:"
+	puts "    Required: #{get_metrics(:spd6)}#{metrics_previous(get_metrics(:spd6), 6, true)} (#{get_metrics(:sppd6)}#{metrics_previous(get_metrics(:sppd6), 10, true)} points)"
 	puts "    Closed since last run: #{deltas[:stories]} (#{deltas[:storypoints]} points)"
-	puts "  Tasks Closed per Day to make 4/25:"
+	puts "  Tasks Closed per Day to make 5/23:"
 	puts "    Required: #{get_metrics(:tpd6)}#{metrics_previous(get_metrics(:tpd6), 8, true)}"
 	puts "    Closed since last run: #{deltas[:tasks]}"
-	puts "  Task Hours per Day to make 4/25:"
+	puts "  Task Hours per Day to make 5/23:"
 	puts "    Required: #{get_metrics(:ppd6)}#{metrics_previous(get_metrics(:ppd6), 7, true)}"
 	puts "    Closed since last run: #{deltas[:original]}"
 end
