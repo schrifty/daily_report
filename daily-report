@@ -203,7 +203,7 @@ def load_issue_data
 end
 
 def process_issue_data
-	days = ((Date.today + 1)..Date.new(2014, 5, 23))
+	days = ((Date.today + 1)..Date.new(2014, 5, 30))
 	set_metrics(:days5, days5 = days.select {|d| (1..5).include?(d.wday) }.size)
 	set_metrics(:days6, days6 = days.select {|d| (1..6).include?(d.wday) }.size)
 
@@ -347,26 +347,26 @@ def daily_report(previous_exists)
 	# puts "\nEstimate Accuracy: Actual #{get_timespent(:closed) / 3600} vs Estimated #{get_original(:closed) / 3600} task hours (defaults to 100% accuracy when tasks lack timespent data)"
 
 	puts "\nRequired velocities assuming 5-day work week [day-over-day delta]:"
-	puts "  Work Days until 5/23: #{get_metrics(:days5)}#{metrics_previous(get_metrics(:days5), 1)}"
-	puts "  Stories Closed per Day to make 5/23:"
+	puts "  Work Days until 5/30: #{get_metrics(:days5)}#{metrics_previous(get_metrics(:days5), 1)}"
+	puts "  Stories Closed per Day to make 5/30:"
 	puts "    Required: #{get_metrics(:spd5)}#{metrics_previous(get_metrics(:spd5), 2, true)} (#{get_metrics(:sppd5)}#{metrics_previous(get_metrics(:sppd5), 9, true)} points)"
 	puts "    Closed since last run: #{deltas[:stories]} (#{deltas[:storypoints]} points)"
-	puts "  Tasks Closed per Day to make 5/23:"
+	puts "  Tasks Closed per Day to make 5/30:"
 	puts "    Required: #{get_metrics(:tpd5)}#{metrics_previous(get_metrics(:tpd5), 4, true)}"
 	puts "    Closed since last run: #{deltas[:tasks]}"
-	puts "  Task Hours per Day to make 5/23:"
+	puts "  Task Hours per Day to make 5/30:"
 	puts "    Required: #{get_metrics(:ppd5)}#{metrics_previous(get_metrics(:ppd5), 3, true	)}"
 	puts "    Closed since last run: #{deltas[:original]}"
 
 	puts "\nRequired velocities assuming 6-day work week [day-over-day delta]:"
-	puts "  Work Days until 5/23: #{get_metrics(:days6)}#{metrics_previous(get_metrics(:days6), 5)}"
-	puts "  Stories Closed per Day to make 5/23:"
+	puts "  Work Days until 5/30: #{get_metrics(:days6)}#{metrics_previous(get_metrics(:days6), 5)}"
+	puts "  Stories Closed per Day to make 5/30:"
 	puts "    Required: #{get_metrics(:spd6)}#{metrics_previous(get_metrics(:spd6), 6, true)} (#{get_metrics(:sppd6)}#{metrics_previous(get_metrics(:sppd6), 10, true)} points)"
 	puts "    Closed since last run: #{deltas[:stories]} (#{deltas[:storypoints]} points)"
-	puts "  Tasks Closed per Day to make 5/23:"
+	puts "  Tasks Closed per Day to make 5/30:"
 	puts "    Required: #{get_metrics(:tpd6)}#{metrics_previous(get_metrics(:tpd6), 8, true)}"
 	puts "    Closed since last run: #{deltas[:tasks]}"
-	puts "  Task Hours per Day to make 5/23:"
+	puts "  Task Hours per Day to make 5/30:"
 	puts "    Required: #{get_metrics(:ppd6)}#{metrics_previous(get_metrics(:ppd6), 7, true)}"
 	puts "    Closed since last run: #{deltas[:original]}"
 end

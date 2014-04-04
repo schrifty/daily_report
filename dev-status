@@ -1,0 +1,117 @@
+#!/Users/mschriftman/.rbenv/versions/2.1.1/bin/ruby
+$LOAD_PATH << './lib'
+
+require 'rubygems'
+require 'csv'
+require 'fileutils'
+require 'jira'
+require 'paint'
+
+def get_jira_client
+	JIRA::Client.new(options = {
+    	:username => "mschriftman",
+    	:password => "l1bertyJ",
+    	:site     => 'https://jira.spredfast.com/',
+    	:context_path => '',
+    	:auth_type => :basic,
+    	:max_results => 99
+ 	})
+end
+
+DEV_HASH= {}
+STORIES = []
+def load_issue_data
+	issues = get_jira_client.Issue.jql('project = Development AND status not in (Closed) AND ((issuetype in ("Story Bug", "Technical task") AND fixVersion = "UX 7.0 - Q1 Milestone"))', 0, 2000)
+	missing_estimates = missing_sizings = missing_taskings = 0
+	issues.each do |issue|
+    	next unless issue_status = issue.status.name
+    	next unless issue.key =~ /DEV-/
+	    issue_status = issue_status.downcase.gsub(" ", "_").to_sym
+    	next if issue_status == :open
+		assignee = issue.assignee ? issue.assignee.displayName : "Unknown"
+		story = issue.parent['key']
+
+	  	if issue.issuetype.name.downcase != 'story bug' || ['critical', 'blocker'].include?(issue.priority.name.downcase)
+			DEV_HASH[assignee] ||= {}
+			DEV_HASH[assignee][story] ||= []
+			DEV_HASH[assignee][story] << issue
+		end
+
+		STORIES << issue.parent['key']
+	end
+end
+
+DEV_ORDER = [
+	'Alexei Saranchev',
+	'Artem Zahogiy',
+	'David Granado',
+	'Dmytro Sydorenko',
+	'Ivan Slautyn',
+	'Jared Bieberich',
+	'Noah Sloan',
+	'Phillip McCartney',
+	'Steve Shipman',
+	'Tommy Morgan',
+	'Veronika Dudnik',
+	'Volodymyr Pavlyuk'
+]
+
+QA_ORDER = [
+	'Leo Laskin',
+	'Natalia Tolstaia',
+	'Olga Bervinova',
+	'Sergey Kim',
+	"Yevhen Oktiabr'ov"
+]
+
+def dev_report
+	stories = get_jira_client.Issue.jql("key in (#{STORIES.uniq.join(',')})")
+	open("devdata2/report", 'w') {|report|
+		[['DEVELOPERS', DEV_ORDER], ['QA', QA_ORDER]].each{|list|
+			str = "\n\n#{list[0]}:\n\n"
+			puts str; report.puts str
+			list[1].each{|engineer|
+				open("devdata2/#{engineer.gsub(' ', '-').downcase}", 'a') {|f|
+					str = "#{engineer}:"
+			  		puts str; report.puts str
+			  		f.puts Date.today.to_s
+			  		if DEV_HASH[engineer]
+				  		DEV_HASH[engineer].keys.each{|parent_key|
+				  			if story = stories.detect{|s| s.key == parent_key}
+				  				sprint = story.customfield_12000 ? story.customfield_12000.to_s.match(/name=(.*?),startDate=/)[1] : 'No Sprint'
+				  				str = Paint["\t#{story.key}: #{story.summary} [#{story.status.name}: ", :green] +
+				  					Paint[sprint, :blue] +
+				  					Paint["]", :green]
+				  				puts str; f.puts str; report.puts str
+				  			else
+				  				str = Paint["\t#{parent_key}", :green]
+				  				puts str; f.puts str; report.puts str
+				  			end
+				  			DEV_HASH[engineer][parent_key].each{|issue|
+				  				case issue.issuetype.name.downcase
+				  				when 'technical task'
+				  					str = "\t\t#{issue.key}: [#{issue.status.name} - Technical Task - #{((issue.timeoriginalestimate || 0) - (issue.timeestimate || 0))/ 3600} of #{(issue.timeoriginalestimate || 0) / 3600} hours] #{issue.summary}"
+					  				puts str; f.puts str; report.puts str
+				  				when 'story bug'
+				  					str = "\t\t#{issue.key}: [#{issue.status.name} - Story Bug - #{issue.priority.name}] #{issue.summary}"
+				  					str = Paint[str, :red]
+					  				puts str; f.puts str; report.puts str
+				  				else
+				  					str = "WARNING: #{issue.key} - #{issue.issuetype.name}"
+				  					str = Paint[str, :red]
+					  				puts str; f.puts str; report.puts str
+				  				end
+				  			}
+				  		}
+			  		else
+			  			str = "\tNothing assigned"
+					  	puts str; f.puts str; report.puts str
+			  		end
+				}
+		  	}
+	  	}
+  	}
+end
+
+load_issue_data
+dev_report

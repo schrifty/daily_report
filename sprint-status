@@ -1,0 +1,86 @@
+#!/Users/mschriftman/.rbenv/versions/2.1.1/bin/ruby
+$LOAD_PATH << './lib'
+
+require 'rubygems'
+require 'csv'
+require 'fileutils'
+require 'jira'
+require 'paint'
+
+def get_jira_client
+	JIRA::Client.new(options = {
+    	:username => "mschriftman",
+    	:password => "l1bertyJ",
+    	:site     => 'https://jira.spredfast.com/',
+    	:context_path => '',
+    	:auth_type => :basic,
+    	:max_results => 99
+ 	})
+end
+
+@stories = nil
+tasks = nil
+def load_issue_data
+	# phase 1 current
+	@stories = get_jira_client.Issue.jql('sprint in openSprints() AND "Epic Link" in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044)', 0, 2000)
+	# phase 1 remaining
+	# @stories = get_jira_client.Issue.jql('sprint IS EMPTY AND issuetype = "Story" AND "Epic Link" in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044)', 0, 2000)
+	# phase 2
+	# @stories = get_jira_client.Issue.jql('"Epic Link" = DEV-35570', 0, 2000)
+	story_keys = []
+	@stories.each {|story|
+    	next unless story_status = story.status.name
+    	next unless story.key =~ /DEV-/
+
+    	story_keys << story.key
+    }
+	@tasks = get_jira_client.Issue.jql("((issuetype ='Technical task') OR (issuetype = 'Story bug' AND priority in (Critical, Blocker)))  AND status != Closed AND parent in (#{story_keys.join(',')})")
+end
+
+def sprint_report
+	load_issue_data
+
+	# Closed stories
+	puts "\nClosed Stories:\n\n"
+	closed = @stories.select {|story| story.status.name.downcase == 'closed'}
+	@stories -= closed
+	closed.each{|story|
+		puts "#{story.key}: #{story.summary} - #{Paint[(story.assignee && story.assignee.displayName) || 'Unknown', :blue]} [#{story.customfield_10003 rescue nil} points]"
+	}
+
+	# Stories where all tasks are >= code read
+	puts "\nStories About to Close (All tasks closed or in code read):\n\n"
+	@stories.reject! {|story|
+		tasks = @tasks.select{|task| task.parent['key'] == story.key}
+		unless tasks.detect {|task| ! ['in code read', 'resolved'].include? task.status.name.downcase }
+			puts "#{story.key}: #{story.summary} - #{Paint[(story.assignee && story.assignee.displayName) || 'Unknown', :blue]} [#{story.customfield_10003} points]"
+			tasks.select{|task| ['in code read'].include? task.status.name.downcase }.each {|task|
+				puts "\t#{task.key} - #{task.status.name}: #{task.summary} - #{Paint[(task.assignee && task.assignee.displayName) || 'unknown', :blue]} [#{((task.timeoriginalestimate || 0) - (task.timeestimate || 0)) / 3600} of #{(task.timeoriginalestimate || 0) / 3600}]"
+			}
+			true
+		else
+			false
+		end
+	}
+
+	# Story status
+	puts "\nStory Status:\n"
+	@stories.each{|story|
+		puts "#{story.key} - #{story.status.name}: #{story.summary} - #{Paint[(story.assignee && story.assignee.displayName) || 'Unknown', :blue]} [#{story.customfield_10003} points]"
+		@tasks.select{|task| task.parent['key'] == story.key && task.status.name.downcase != 'closed'}.each {|task|
+			color = case task.status.name.downcase
+			when 'open', 'reopened', 'information needed'
+				:red
+			when 'in development', 'in progress'
+				:yellow
+			when 'in code read'
+				:green
+			else
+				:black
+			end
+			puts "\t#{Paint[task.key, color]} (#{task.issuetype.name}) - #{task.status.name}: #{task.summary} - #{(task.assignee && Paint[task.assignee.displayName, :blue]) || 'Unknown'} [#{((task.timeoriginalestimate || 0) - (task.timeestimate || 0)) / 3600} of #{(task.timeoriginalestimate || 0) / 3600}]"
+		}
+	}
+end
+
+sprint_report

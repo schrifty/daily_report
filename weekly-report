@@ -98,65 +98,7 @@ def save_historical_data
 	}
 end
 
-DEV_HASH= {}
 def load_issue_data
-	# issues = get_jira_client.Issue.jql('project = Development AND (issuetype in ("Story Bug", "Technical task") AND fixVersion = "UX 7.0 - Q1 Milestone" OR issuetype = Story AND "Epic Link" in (DEV-32341, DEV-32773, DEV-33457, DEV-33458, DEV-34044))', 0, 2000)
-	# issues.each do |issue|
- #    	next unless issue_status = issue.status.name
- #    	next unless issue.key =~ /DEV-/
-
-	#     issue_status = issue_status.downcase.gsub(" ", "_").to_sym
-	# 	assignee = issue.assignee ? issue.assignee.displayName : "Unknown"
-	# 	DEV_HASH[assignee] ||= {:stories => 0, :tasks => 0, :original => 0, :timespent => 0, :bugs => 0}
-
- #    	case issue.issuetype.name.downcase
- #    	when 'technical task'
-	#     	issue_status = :in_progress if [:information_needed, :in_code_read, :resolved].include? issue_status
-	#     	issue_status = :open if [:reopened].include? issue_status
-
-	#     	# default timespent to 100% accuracy if it's not provided
-	#     	# issue.timeestimate => remaining
-	#     	# issue.timeoriginalestimate => original
-	#     	# issue.timespent -> timespent
- #    		val = issue.timeestimate.to_i
- #    		inc(:remaining, issue_status, val)
- #    		inc(:remaining, :total, val)
-
- #    		val = issue.timeoriginalestimate.to_i
- #    		inc(:original, issue_status, val)
- #    		inc(:original, :total, val)
-
- #    		val = (issue.timespent || issue.timeoriginalestimate).to_i
- #    		inc(:timespent, issue_status, val)
- #    		inc(:timespent, :total, val)
-
-	# 		inc_tasks(issue_status, 1)
-	# 		inc_tasks(:total, 1)
-
-	# 		cat_taskids(issue_status, issue.key)
-
-	# 		# assignee stats
-	# 		if issue_status == :closed
-	# 			DEV_HASH[assignee][:tasks] += 1
-	# 			DEV_HASH[assignee][:original] += issue.timeoriginalestimate.to_i
-	# 			DEV_HASH[assignee][:timespent] += (issue.timespent || issue.timeoriginalestimate).to_i
-	# 		end
-	# 	when 'story'
-	# 		inc_stories(issue_status, 1)
-	# 		inc_stories(:total, 1)
-
-	# 		cat_storyids(issue_status, issue.key)
-	# 		inc_storypoints(issue_status, issue.customfield_10003 || 0)
-	# 		inc_storypoints(:total, issue.customfield_10003 || 0)
-
-	# 		if issue_status == :closed
-	# 			DEV_HASH[assignee][:stories] += 1
-	# 		end
-	# 	when 'story bug'
-	# 		DEV_HASH[assignee][:bugs] += 1
-	# 	end
-	# end
-
 	process_issue_data
 end
 
